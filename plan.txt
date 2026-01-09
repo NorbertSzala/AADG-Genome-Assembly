@@ -1,0 +1,205 @@
+Cel
+
+* assembler de novo dla short reads 80 bp
+* podejście: De Bruijn Graph + k-mer spectrum + czyszczenie grafu + traversal do contigów
+* wejście: FASTA z readami
+* wyjście: FASTA z contigami ≥ 300 bp + krótkie raporty tekstowe
+
+
+Pipeline krok po kroku
+
+Krok 1. Uruchomienie główne
+
+* skrypt: src/run_assembly.py
+* input: data/reads.fasta
+* output: out/contigs.fasta, out/report.txt, out/params_used.json, out/kmer_histogram.tsv, out/graph_stats.tsv
+* rola: spina wszystko, wczytanie parametrów, wywołanie modułów, zapis wyników, walidacje długości, proste statystyki
+
+Proponowane argumenty CLI
+
+* --in data/reads.fasta
+* --outdir out/
+* --k 31
+* --min_kmer_count 2
+* --tip_max_len 3
+* --min_contig_len 300
+* --max_contigs 0  (0 = bez limitu, tylko filtr długości)
+
+Krok 2. Wczytanie readów
+
+* skrypt/moduł: src/io_fasta.py
+* funkcje
+* read_fasta(path) -> lista stringów
+* write_fasta(seqs, path, prefix) -> zapis FASTA
+* input: FASTA
+* output: lista readów w pamięci
+* zadania
+* usunięcie znaków białych
+* walidacja alfabetu A/C/G/T
+* opcjonalnie: wyrzucenie readów z N
+
+Krok 3. Generowanie k-merów i histogram
+
+* skrypt/moduł: src/kmers.py
+* funkcje
+* iter_kmers(read, k) -> generator k-merów
+* count_kmers(reads, k) -> dict kmer->count
+* kmer_histogram(kmer_counts) -> dict count->ile_kmerów
+* input: lista readów, k
+* output: dict kmer_counts, plik out/kmer_histogram.tsv
+* zadania
+* liczenie częstości k-merów
+* zapis histogramu do TSV
+* przygotowanie danych do filtracji błędów
+
+Krok 4. Budowa grafu de Bruijna
+
+* skrypt/moduł: src/dbg.py
+* reprezentacja
+* node = (k-1)-mer jako string
+* edge = przejście node_u -> node_v z wagą = liczba k-merów
+* struktury
+* out_edges: dict node_u -> dict node_v -> weight
+* in_degree: dict node -> int
+* out_degree: dict node -> int
+* funkcje
+* build_graph_from_kmers(kmer_counts, k, min_kmer_count) -> Graph
+* graph_stats(graph) -> dict statystyk
+* input: kmer_counts, k, min_kmer_count
+* output: obiekt Graph + out/graph_stats.tsv
+* zadania
+* odfiltrowanie k-merów poniżej progu min_kmer_count już na wejściu do grafu
+* policzenie stopni węzłów
+* zapis statystyk
+* liczba węzłów
+* liczba krawędzi
+* liczba komponentów spójnych (opcjonalnie)
+
+Krok 5. Czyszczenie grafu po konstrukcji
+
+* skrypt/moduł: src/cleaning.py
+* cele
+* usunięcie struktur błędowych: tips, islands, proste bubbles
+* funkcje
+* remove_islands(graph, min_component_size_nodes) -> graph
+* remove_tips(graph, tip_max_len) -> graph
+* pop_bubbles_simple(graph, max_bubble_len) -> graph
+* input: graph, parametry czyszczenia
+* output: graph po czyszczeniu + wpis do report.txt
+* minimalny zestaw do projektu
+* remove_islands
+* remove_tips
+* bubble opcjonalnie, prosta wersja tylko dla krótkich alternatywnych ścieżek
+* uwagi implementacyjne
+* islands: BFS/DFS po grafie nieskierowanym na poziomie węzłów
+* tips: wyszukiwanie ślepych końców (out_degree=0 lub in_degree=0) i cofanie do najbliższego rozgałęzienia, limit długości w krawędziach
+* bubbles: wykrycie dwóch ścieżek od split do merge, wybór ścieżki o większej sumie wag, limit długości
+
+Krok 6. Wyznaczenie punktów startowych do contigów
+
+* skrypt/moduł: src/traversal.py
+* definicje
+* start node: in_degree != 1 lub out_degree != 1
+* contig path: ścieżka idąca przez węzły gdzie in_degree=1 i out_degree=1
+* funkcje
+* find_start_nodes(graph) -> lista node
+* walk_unitig(graph, start_node, used_edges) -> seq, path_edges
+* input: graph
+* output: lista contigów w pamięci
+* uwagi
+* śledzenie użytych krawędzi, żeby nie generować duplikatów
+* węzły w cyklu bez startów: dodatkowy krok, wybór dowolnego węzła cyklu jako start, jeśli są nieużyte krawędzie
+
+Krok 7. Składanie sekwencji contigu z path
+
+* skrypt/moduł: src/traversal.py
+* zasada
+* start_seq = start_node (k-1)
+* dla każdej następnej krawędzi dopisz ostatnią literę kolejnego węzła
+* funkcje
+* path_to_sequence(start_node, nodes_path) -> string
+
+Krok 8. Filtrowanie, deduplikacja, zapis
+
+* skrypt: src/run_assembly.py + helper w src/utils.py
+* reguły
+* filtr długości: len(contig) >= min_contig_len
+* deduplikacja: identyczne sekwencje usunięte, zachowanie jednej kopii
+* sortowanie: malejąco po długości
+* zapis
+* out/contigs.fasta
+* prefix nagłówków: contig_00001 len=...
+* raport
+* liczba contigów >=300
+* suma długości
+* N50 opcjonalnie
+* najdłuższy contig
+
+Krok 9. Raport końcowy i parametry
+
+* skrypt: src/run_assembly.py
+* pliki
+* out/report.txt
+* out/params_used.json
+* zawartość report.txt
+* parametry uruchomienia
+* statystyki wejścia: liczba readów, średnia długość
+* k-mer histogram skrót: progi, ile k-merów odrzucono
+* statystyki grafu przed i po czyszczeniu
+* liczba contigów >=300
+* N50 opcjonalnie
+
+Podział pracy w zespole 2-osobowym
+
+Osoba 1. Graf i czyszczenie
+
+* io_fasta.py
+* kmers.py
+* dbg.py
+* cleaning.py
+* testy jednostkowe dla kmers i dbg
+* implementacja islands, tips
+* analiza progów min_kmer_count, tip_max_len na podstawie histogramu
+
+Osoba 2. Traversal, output, raporty
+
+* traversal.py
+* utils.py
+* run_assembly.py
+* deduplikacja, sortowanie, zapis FASTA
+* raportowanie i pliki TSV/JSON
+* obsługa cykli bez startów
+* testy jednostkowe dla traversal
+* przygotowanie README.txt i opis alternatyw
+
+Propozycja kontraktu między modułami
+
+* Graph jako prosty obiekt lub dict
+* wymagane pola
+* out_edges: dict[str, dict[str, int]]
+* in_degree: dict[str, int]
+* out_degree: dict[str, int]
+* funkcje pomocnicze
+* add_edge(u, v, w)
+* remove_edge(u, v)
+* nodes() -> iterator
+* edges() -> iterator
+
+
+
+
+Alternatywy, jeśli coś nie działa
+
+* alternatywa A: mocniejsza filtracja k-merów, min_kmer_count 3
+* alternatywa B: większe k, np. 41, mniej powtórzeń, więcej przerwań
+* alternatywa C: proste bubble popping, max_bubble_len 10
+* alternatywa D: zamiast bubble, tylko wybór krawędzi o największej wadze na rozgałęzieniach, ryzyko chimerycznych contigów
+
+Krytyczne testy “przed oddaniem”
+
+* test FASTA parsera na krótkim pliku
+* test generowania k-merów, liczności
+* test grafu na sztucznym przykładzie z jedną ścieżką
+* test tips removal na przykładzie z jedną ślepą odnogą
+* test traversal na grafie z rozgałęzieniem i z cyklem
+* test końcowy: czy wszystkie contigi mają >=300, czy plik FASTA poprawny formatowo
