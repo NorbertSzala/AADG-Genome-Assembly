@@ -8,6 +8,12 @@ Cel
 
 Pipeline krok po kroku
 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~ Norbert ~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
 Krok 1. Uruchomienie główne
 
 * skrypt: src/run_assembly.py
@@ -79,21 +85,23 @@ Krok 5. Czyszczenie grafu po konstrukcji
 
 * skrypt/moduł: src/cleaning.py
 * cele
-* usunięcie struktur błędowych: tips, islands, proste bubbles
+    * usunięcie struktur błędowych: tips, islands, proste bubbles
 * funkcje
-* remove_islands(graph, min_component_size_nodes) -> graph
-* remove_tips(graph, tip_max_len) -> graph
-* pop_bubbles_simple(graph, max_bubble_len) -> graph
+    * remove_islands(graph, min_component_size_nodes) -> graph
+    * remove_tips(graph, tip_max_len) -> graph
+    * pop_bubbles_simple(graph, max_bubble_len) -> graph
 * input: graph, parametry czyszczenia
 * output: graph po czyszczeniu + wpis do report.txt
-* minimalny zestaw do projektu
-* remove_islands
-* remove_tips
-* bubble opcjonalnie, prosta wersja tylko dla krótkich alternatywnych ścieżek
+
 * uwagi implementacyjne
 * islands: BFS/DFS po grafie nieskierowanym na poziomie węzłów
 * tips: wyszukiwanie ślepych końców (out_degree=0 lub in_degree=0) i cofanie do najbliższego rozgałęzienia, limit długości w krawędziach
 * bubbles: wykrycie dwóch ścieżek od split do merge, wybór ścieżki o większej sumie wag, limit długości
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~ Kasia ~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Krok 6. Wyznaczenie punktów startowych do contigów
 
@@ -148,6 +156,10 @@ Krok 9. Raport końcowy i parametry
 * statystyki grafu przed i po czyszczeniu
 * liczba contigów >=300
 * N50 opcjonalnie
+
+Krok 10. Testowanie najlepszych parametrów
+
+
 
 Podział pracy w zespole 2-osobowym
 
