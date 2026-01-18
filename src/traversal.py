@@ -83,7 +83,7 @@ def walk_unitig(
 
 def path_to_sequence(path: list[str], node_len: int) -> str:
     """
-    Convert a path of (k-1)-mer nodes into a DNA sequence.
+    Konwertuje ścieżkę węzłów (k-merów) w gotową sekwencję DNA
     """
     if not path:
         return ""
@@ -91,10 +91,9 @@ def path_to_sequence(path: list[str], node_len: int) -> str:
     if len(path) == 1:
         return path[0]
     
-    # Start with first node
     sequence = path[0]
     
-    # Append last character of each subsequent node
+    # dla kazdego kolejnego wezła w ściezce dodaj tylko jego ostatni znak
     for node in path[1:]:
         sequence += node[-1]
     
@@ -107,77 +106,67 @@ def extract_contigs(
     min_contig_len: int = 100
 ) -> list[str]:
     """
-    Extract all contigs from the graph via traversal.
+    Ekstrakcja kontigów z wyczyszczonego grafu de Bruijna.
+    Skupia się na wyznaczeniu ścieek jednoznacznych 
     """
     contigs = []
     used_edges = set()
     node_len = k - 1
     
-    # Phase 1: Start from identified start nodes
+    # identyfikacja węzłów startowych
     start_nodes = find_start_nodes(graph)
     print(f"Start nodes: {len(start_nodes)}")
     
     for start in start_nodes:
            
-        # Try each outgoing edge from this start
+        # jeśli krawędź nie została jeszcze użyta w żadnym kontigu
         if start in graph.out_edges:
             for target in list(graph.out_edges[start].keys()):
                 edge = (start, target)
                 
                 if edge not in used_edges:
-                    # Walk the unitig from this start
+                    # Idź wzdłuż unitigu
                     path, edges = walk_unitig(graph, start, used_edges)
                     
-                    # Mark edges as used
+                    # Zaznaczenie krawędzi jako wykorzystanej
                     used_edges.update(edges)
                     
-                    # Convert to sequence
+                    # Zamień na sekw nukleotydową
                     sequence = path_to_sequence(path, node_len)
                     
-                    # Add all contigs (filtering comes later)
-                    if len(sequence) > 0:
+                    if len(sequence) >=  min_contig_len:
                         contigs.append(sequence)
     
-    print(f"Phase 2: Checking for cycles...")
     if hasattr(graph, 'nodes'):
         all_nodes = list(graph.nodes)
     else:
         all_nodes = list(set(graph.in_degree) | set(graph.out_degree))
 
-    # Phase 2: Handle cycles and remaining unused edges
+    # Phase 2: Radzenie z cyklami i nieuzytymi nodes
     for node in all_nodes:
         if node in graph.out_edges:
             for target in list(graph.out_edges[node].keys()):
                 edge = (node, target)
                 
                 if edge not in used_edges:
-                    # Found an unused edge - walk from here
-                    # print(f"  Found unused edge: {node[:10]}...→{target[:10]}...")
-                   
-                    path, edges = walk_unitig(graph, node, used_edges)
 
-                    used_edges.update(edges)
-                    
+                    path, edges = walk_unitig(graph, node, used_edges)
+                    used_edges.update(edges)                    
                     sequence = path_to_sequence(path, node_len)
                     
-                    if len(sequence) > 0:
+                    if len(sequence) >=  min_contig_len:
                         contigs.append(sequence)
     
-    # Filter by minimum length
-    filtered_contigs = [c for c in contigs if len(c) >= min_contig_len]
-    for cont in filtered_contigs:
+    for cont in contigs:
         print(len(cont))
-    # Remove exact duplicates
-    unique_contigs = list(set(filtered_contigs))
-    
-    # Sort by length (longest first)
-    unique_contigs.sort(key=len, reverse=True)
+
+    unique_contigs = list(set(contigs))
     
     return unique_contigs
 
 
 def contig_stats(contigs: list[str]) -> dict[str, any]:
-    """Calculate statistics for a list of contigs."""
+    """Statystyki wyznaczonych kontigów"""
     if not contigs:
         return {
             "num_contigs": 0,
@@ -185,13 +174,13 @@ def contig_stats(contigs: list[str]) -> dict[str, any]:
             "longest": 0,
             "shortest": 0,
             "mean_length": 0,
-            "n50": 0,
+            "n50": 0
         }
     
     lengths = [len(c) for c in contigs]
     total = sum(lengths)
     
-    # Calculate N50
+    # N50: sortuj malejąco i znajdź długość, przy której suma >= 50% total
     sorted_lengths = sorted(lengths, reverse=True)
     cumsum = 0
     n50 = 0
@@ -207,7 +196,7 @@ def contig_stats(contigs: list[str]) -> dict[str, any]:
         "longest": max(lengths),
         "shortest": min(lengths),
         "mean_length": total / len(contigs),
-        "n50": n50,
+        "n50": n50
     }
     
     return stats

@@ -6,119 +6,88 @@ Tests different parameter combinations and finds the best one.
 Metric: maximize total contig length + N50
 """
 
-import subprocess
 import json
 from pathlib import Path
 import sys
+import shutil
+import math
+
+# Import run_assembly function directly
+from assembly_core import run_assembly
 
 
-def run_assembly(input_fasta, output_dir, k, min_kmer_count, 
-                min_component_size, tip_max_len, pop_bubbles, 
-                max_bubble_len, min_contig_len):
-    """
-    Run assembly with given parameters.
-    Returns dict with metrics or None if failed.
-    """
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+# def score_result(metrics):
+#     """
+#     Calculate score for parameter combination.
     
-    cmd = [
-        "python3", "run_assembly.py",
-        "-I", str(input_fasta),
-        "-O", str(output_dir),
-        "-K", str(k),
-        "-M", str(min_kmer_count),
-        "--min-component-size", str(min_component_size),
-        "--tip-max-len", str(tip_max_len),
-        "--min-contig-len", str(min_contig_len),
-    ]
+#     Score = total_length * 0.6 + N50 * 0.3 + num_contigs_penalty
     
-    if pop_bubbles:
-        cmd.extend(["--pop-bubbles", "--max-bubble-len", str(max_bubble_len)])
+#     Higher is better.
+#     """
+#     if metrics is None or metrics.get('num_contigs', 0) == 0:
+#         return 0
     
-   
-    subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+#     # We want: high total length, high N50, fewer contigs
+#     total_score = metrics['total_length'] * 0.6
+#     n50_score = metrics['n50'] * 0.3
     
-    # Read report to get metrics
-    report_file = output_dir / "report.txt"
-    if not report_file.exists():
-        return None
-    metrics = parse_report(report_file)
-
-    metrics['contigs_file'] = output_dir / "contigs.fasta"
-
-    return metrics
-        
-
-def parse_report(report_path):
-    """Extract metrics from report.txt"""
-    metrics = {
-        'num_contigs': 0,
-        'total_length': 0,
-        'longest': 0,
-        'n50': 0
-    }
+#     # Penalty for too many contigs (fragmented assembly)
+#     contig_penalty = -abs(metrics['num_contigs'] - 10) * 10
     
-    with open(report_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if 'num_contigs:' in line:
-                metrics['num_contigs'] = int(line.split(':')[1].strip())
-            elif 'total_length:' in line:
-                metrics['total_length'] = int(line.split(':')[1].strip())
-            elif 'longest:' in line:
-                metrics['longest'] = int(line.split(':')[1].strip())
-            elif 'n50:' in line:
-                metrics['n50'] = int(line.split(':')[1].strip())
-    
-    return metrics
-
+#     return total_score + n50_score + contig_penalty
 
 def score_result(metrics):
     """
-    Calculate score for parameter combination.
-    
-    Score = total_length * 0.6 + N50 * 0.3 + num_contigs_penalty
-    
-    Higher is better.
+    Ocena bez znajomości długości genomu i referencji.
     """
-    if metrics is None or metrics['num_contigs'] == 0:
+    if metrics is None or metrics.get('num_contigs', 0) == 0:
         return 0
     
-    # We want: high total length, high N50, fewer contigs
-    total_score = metrics['total_length'] * 0.6
-    n50_score = metrics['n50'] * 0.3
+    # 1. N50 i Najdłuższy kontig
+    continuity_score = math.log10(metrics['n50'] * metrics['longest'] + 1)
     
-    # Penalty for too many contigs (fragmented assembly)
-    contig_penalty = -abs(metrics['num_contigs'] - 10) * 10
+    # 2. Kara za fragmentację
+    fragmentation_penalty = 1.0 / math.log(metrics['num_contigs'] + 4, 5)
     
-    return total_score + n50_score + contig_penalty
+    # 3. Bonus za średnią długość
+    mean_bonus = min(1.0, metrics['mean_length'] / 1000)
+    
+    return continuity_score * fragmentation_penalty * (1 + mean_bonus)
 
 
 def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     """
     Test multiple parameter combinations and save ONLY best.
+    
+    Args:
+        input_fasta: Path to input FASTA file
+        final_output_dir: Directory where best assembly will be saved
+        
+    Returns:
+        dict: Best result with params, metrics, and score
     """
+    input_fasta = Path(input_fasta)
+    
     print("="*70)
     print("PARAMETER OPTIMIZATION")
     print("="*70)
     print(f"Input: {input_fasta}")
     print()
-    
-    # Parameter grid (bez zmian)
+
+    # Parameter grid
     param_grid = {
-        'k': [15, 17], #, 19, 21, 23],
-        'min_kmer_count': [2], #3, 4],
-        'min_component_size': [5, 10],
-        'tip_max_len': [2], #3, 5],
+        'kmer_length': [15, 17, 29, 31],
+        'min_kmer_count': [2],
+        'min_component_size': [3, 5, 10],
+        'tip_max_len': [1, 2],
         'pop_bubbles': [True, False],
         'max_bubble_len': [5, 8],
         'min_contig_len': [300]
     }
     
-    # Generate combinations (bez zmian)
+    # Generate combinations
     combinations = []
-    for k in param_grid['k']:
+    for k in param_grid['kmer_length']:
         for min_kmer in param_grid['min_kmer_count']:
             for min_comp in param_grid['min_component_size']:
                 for tip_len in param_grid['tip_max_len']:
@@ -129,7 +98,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
                             bubble_lens = [5]
                         for bubble_len in bubble_lens:
                             combinations.append({
-                                'k': k,
+                                'kmer_length': k,
                                 'min_kmer_count': min_kmer,
                                 'min_component_size': min_comp,
                                 'tip_max_len': tip_len,
@@ -146,22 +115,32 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     temp_dir = Path("temp_optimization")
     
     for i, params in enumerate(combinations, 1):
-        print(f"[{i}/{len(combinations)}] k={params['k']}, M={params['min_kmer_count']}")
+        print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}")
         
         output_dir = temp_dir / f"run_{i:03d}"
-        metrics = run_assembly(input_fasta, output_dir, **params)
         
-        if metrics:
-            score = score_result(metrics)
-            print(f"    → total={metrics['total_length']}, N50={metrics['n50']}, score={score:.0f}")
-            results.append({
-                'params': params,
-                'metrics': metrics,
-                'score': score,
-                'output_dir': output_dir
-            })
-        else:
-            print(f"    → FAILED")
+        try:
+            # Call run_assembly directly with parameters
+            metrics = run_assembly(
+                input=input_fasta,
+                outdir=output_dir,
+                **params
+            )
+            
+            if metrics and metrics.get('num_contigs', 0) > 0:
+                score = score_result(metrics)
+                print(f"    → total={metrics['total_length']}, N50={metrics['n50']}, score={score:.0f}")
+                results.append({
+                    'params': params,
+                    'metrics': metrics,
+                    'score': score,
+                    'output_dir': output_dir
+                })
+            else:
+                print(f"    → FAILED (no contigs)")
+                
+        except Exception as e:
+            print(f"    → FAILED ({e})")
     
     if not results:
         print("\nNo successful runs!")
@@ -171,8 +150,6 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     best = max(results, key=lambda x: x['score'])
     
     # Copy ONLY best result
-    import shutil
-    
     final_dir = Path(final_output_dir)
     if final_dir.exists():
         shutil.rmtree(final_dir)
@@ -186,7 +163,8 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
         json.dump(best['params'], f, indent=2)
     
     # Clean up ALL temp files
-    shutil.rmtree(temp_dir)
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
     
     print("\n" + "="*70)
     print("BEST PARAMETERS")
@@ -196,24 +174,22 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     print()
     print("Metrics:")
     for key, value in best['metrics'].items():
-        if key != 'contigs_file':
-            print(f"  {key}: {value}")
+        print(f"  {key}: {value}")
     print()
     print(f"✓ Saved to: {final_dir}/")
     print("="*70)
     
     return best
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python3 optimize_parameters.py <input.fasta> [--quick]")
+        print("Usage: python3 optimize_parameters.py <input.fasta>")
         print()
-        print("Options:")
-        print("  (default)  Full optimization (~2 hours, 120 tests)")
+        print("Runs full optimization (~2 hours, ~100 tests)")
         sys.exit(1)
     
     input_fasta = sys.argv[1]
-    
-
     optimize_parameters(input_fasta)
 
 

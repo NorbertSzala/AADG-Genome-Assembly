@@ -77,7 +77,7 @@ def estimate_error_rate(reads: List[str], k: int = 17) -> float:
         return 0.0
     
     error_rate = (singletons / total_kmers) / k
-    return min(error_rate, 0.2)
+    return error_rate
 
 
 def adaptive_correction(reads: List[str]) -> List[str]:
