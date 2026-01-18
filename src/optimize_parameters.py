@@ -10,31 +10,19 @@ import json
 from pathlib import Path
 import sys
 import shutil
-import math
 
 # Import run_assembly function directly
 from assembly_core import run_assembly
 
-
-# def score_result(metrics):
-#     """
-#     Calculate score for parameter combination.
-    
-#     Score = total_length * 0.6 + N50 * 0.3 + num_contigs_penalty
-    
-#     Higher is better.
-#     """
-#     if metrics is None or metrics.get('num_contigs', 0) == 0:
-#         return 0
-    
-#     # We want: high total length, high N50, fewer contigs
-#     total_score = metrics['total_length'] * 0.6
-#     n50_score = metrics['n50'] * 0.3
-    
-#     # Penalty for too many contigs (fragmented assembly)
-#     contig_penalty = -abs(metrics['num_contigs'] - 10) * 10
-    
-#     return total_score + n50_score + contig_penalty
+PARAM_GRID = {
+        'kmer_length': [15, 17, 19, 21],  
+        'min_kmer_count': [2, 3, 4], 
+        'min_component_size': [5, 10],  
+        'tip_max_len': [1, 2],  
+        'pop_bubbles': [True, False],  
+        'max_bubble_len': [3, 5],  
+        'min_contig_len': [300]  
+    }
 
 def score_result(metrics):
     """Scoring: total_length (pokrycie) + N50 (ciągłość)"""
@@ -49,42 +37,10 @@ def score_result(metrics):
     
     return coverage_score #+ continuity_score
 
-
-def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
-    """
-    Test multiple parameter combinations and save ONLY best.
-    
-    Args:
-        input_fasta: Path to input FASTA file
-        final_output_dir: Directory where best assembly will be saved
-        
-    Returns:
-        dict: Best result with params, metrics, and score
-    """
-    input_fasta = Path(input_fasta)
-    
-
-    # Parameter grid
-    # param_grid = {
-    #     'kmer_length': [15, 17, 29, 31],
-    #     'min_kmer_count': [2],
-    #     'min_component_size': [3, 5, 10],
-    #     'tip_max_len': [1, 2],
-    #     'pop_bubbles': [True, False],
-    #     'max_bubble_len': [5, 8],
-    #     'min_contig_len': [300]
-    # }
-    param_grid = {
-        'kmer_length': [17, 19, 21],  # Szerszy zakres, niższe k dla wyższego error rate
-        'min_kmer_count': [2, 3],  # Wyższe wartości filtrują błędne k-mery (error rate 5%)
-        'min_component_size': [10, 15],  # Więcej opcji dla filtrowania małych wysp
-        'tip_max_len': [1],  # Dłuższe tipy przy wyższym error rate
-        'pop_bubbles': [True],
-        'max_bubble_len': [3],  # Dłuższe bubble paths przy error rate 5%
-        'min_contig_len': [300]  # Różne progi długości
-    }
-    # Generate combinations
+def generate_param_combinations(param_grid: dict):
+    """Generuj kombinacje parametrów."""
     combinations = []
+
     for k in param_grid['kmer_length']:
         for min_kmer in param_grid['min_kmer_count']:
             for min_comp in param_grid['min_component_size']:
@@ -105,6 +61,16 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
                                 'min_contig_len': 300
                             })
     
+    return combinations
+
+def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
+    """
+    Test multiple parameter combinations and save ONLY best.
+
+    """
+    input_fasta = Path(input_fasta)
+
+    combinations = generate_param_combinations(PARAM_GRID)    
     
     # Test all in temp directory
     results = []
@@ -128,7 +94,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
             
             if metrics and metrics.get('num_contigs', 0) > 0:
                 score = score_result(metrics)
-                print(f"    → total={metrics['total_length']}, N50={metrics['n50']}, score={score:.4f}")
+                print(f"______total={metrics['total_length']}, N50={metrics['n50']}, score={score:.4f}")
                 results.append({
                     'params': params,
                     'metrics': metrics,
