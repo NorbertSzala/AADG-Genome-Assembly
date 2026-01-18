@@ -68,21 +68,34 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     """
     input_fasta = Path(input_fasta)
     
-    print("="*70)
-    print("PARAMETER OPTIMIZATION")
-    print("="*70)
-    print(f"Input: {input_fasta}")
-    print()
 
     # Parameter grid
+    # param_grid = {
+    #     'kmer_length': [15, 17, 29, 31],
+    #     'min_kmer_count': [2],
+    #     'min_component_size': [3, 5, 10],
+    #     'tip_max_len': [1, 2],
+    #     'pop_bubbles': [True, False],
+    #     'max_bubble_len': [5, 8],
+    #     'min_contig_len': [300]
+    # }
+    # param_grid = {
+    #     'kmer_length': [15, 17, 21, 25, 29, 31, 35],  # Szerszy zakres, niższe k dla wyższego error rate
+    #     'min_kmer_count': [2, 3, 4, 5],  # Wyższe wartości filtrują błędne k-mery (error rate 5%)
+    #     'min_component_size': [3, 5, 8, 10, 15],  # Więcej opcji dla filtrowania małych wysp
+    #     'tip_max_len': [1, 2, 3, 5],  # Dłuższe tipy przy wyższym error rate
+    #     'pop_bubbles': [True, False],
+    #     'max_bubble_len': [3, 5, 8, 10],  # Dłuższe bubble paths przy error rate 5%
+    #     'min_contig_len': [300]  # Różne progi długości
+    # }
     param_grid = {
-        'kmer_length': [15, 17, 29, 31],
-        'min_kmer_count': [2],
-        'min_component_size': [3, 5, 10],
-        'tip_max_len': [1, 2],
+        'kmer_length': [15],  # Szerszy zakres, niższe k dla wyższego error rate
+        'min_kmer_count': [2, 3],  # Wyższe wartości filtrują błędne k-mery (error rate 5%)
+        'min_component_size': [3, 5],  # Więcej opcji dla filtrowania małych wysp
+        'tip_max_len': [1, 2],  # Dłuższe tipy przy wyższym error rate
         'pop_bubbles': [True, False],
-        'max_bubble_len': [5, 8],
-        'min_contig_len': [300]
+        'max_bubble_len': [3, 5, 8, 10],  # Dłuższe bubble paths przy error rate 5%
+        'min_contig_len': [300]  # Różne progi długości
     }
     
     # Generate combinations
@@ -107,18 +120,19 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
                                 'min_contig_len': 300
                             })
     
-    print(f"Testing {len(combinations)} combinations...")
-    print()
     
     # Test all in temp directory
     results = []
     temp_dir = Path("temp_optimization")
-    
+    best_score = 0
+    best_result = None
+
     for i, params in enumerate(combinations, 1):
         print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}")
         
         output_dir = temp_dir / f"run_{i:03d}"
-        
+        output_dir.mkdir(parents=True, exist_ok=True) 
+
         try:
             # Call run_assembly directly with parameters
             metrics = run_assembly(
@@ -136,11 +150,28 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
                     'score': score,
                     'output_dir': output_dir
                 })
+
+                if score > best_score:
+                    best_score = score
+                    # Usuń stary best
+                    if best_result and best_result['output_dir'].exists():
+                        shutil.rmtree(best_result['output_dir'])
+                    
+                    best_result = {
+                        'params': params,
+                        'metrics': metrics,
+                        'score': score,
+                        'output_dir': output_dir
+                    }
+                else:
+                    # Usuń gorszy wynik od razu
+                    shutil.rmtree(output_dir)
+        
             else:
-                print(f"    → FAILED (no contigs)")
+                print(f"FAILED (no contigs)")
                 
         except Exception as e:
-            print(f"    → FAILED ({e})")
+            print(f"FAILED ({e})")
     
     if not results:
         print("\nNo successful runs!")
@@ -166,7 +197,6 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     
-    print("\n" + "="*70)
     print("BEST PARAMETERS")
     print("="*70)
     for key, value in best['params'].items():
@@ -176,8 +206,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     for key, value in best['metrics'].items():
         print(f"  {key}: {value}")
     print()
-    print(f"✓ Saved to: {final_dir}/")
-    print("="*70)
+    print(f"Saved to: {final_dir}/")
     
     return best
 
@@ -185,8 +214,6 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
 def main():
     if len(sys.argv) < 2:
         print("Usage: python3 optimize_parameters.py <input.fasta>")
-        print()
-        print("Runs full optimization (~2 hours, ~100 tests)")
         sys.exit(1)
     
     input_fasta = sys.argv[1]

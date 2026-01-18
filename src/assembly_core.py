@@ -102,7 +102,6 @@ def run_assembly(
     report_lines.append("")
 
     # ---------- STEP 1: READ FASTA ----------
-    print("[1/6] Reading reads...")
     reads = fasta_to_list(input)
     report_lines.append(f"Reads loaded: {len(reads)}")
     if reads:
@@ -141,24 +140,20 @@ def run_assembly(
         use_tourbus=True
     )
 
-    # Debug info
-    print(f"Before cleaning: {len(graph.nodes)} nodes")
+    # # Debug info
+    # print(f"Before cleaning: {len(graph.nodes)} nodes")
 
     # ---------- STEP 4: CLEAN GRAPH ----------
-    print("[4/6] Cleaning graph...")
     
-    print("  Removing islands...")
     graph = remove_islands(graph, min_component_size)
-    print(f"    After islands: {len(graph.nodes)} nodes")
+    # print(f"    After islands: {len(graph.nodes)} nodes")
 
-    print("  Removing tips...")
     graph = remove_tips(graph, tip_max_len)
-    print(f"    After tips: {len(graph.nodes)} nodes")
+    # print(f"    After tips: {len(graph.nodes)} nodes")
     
     if pop_bubbles:
-        print("  Popping bubbles...")
         graph = pop_bubbles_simple(graph, max_bubble_len)
-        print(f"    After bubbles: {len(graph.nodes)} nodes")
+        # print(f"    After bubbles: {len(graph.nodes)} nodes")
 
     stats_after = graph_stats(graph)
     write_graph_stats(stats_after, stats_after_path)
@@ -169,17 +164,13 @@ def run_assembly(
     report_lines.append("")
 
     # ---------- STEP 5: TRAVERSAL TO CONTIGS ----------
-    print("[5/6] Extracting contigs...")
     contigs = extract_contigs(
         graph, 
         k=kmer_length, 
         min_contig_len=min_contig_len
     )
-    
-    print(f"  Generated {len(contigs)} contigs >= {min_contig_len} bp")
-    
+        
     # ---------- STEP 6: WRITE OUTPUT ----------
-    print("[6/6] Writing output...")
     write_fasta(contigs, contigs_path, prefix="contig")
     
     report_lines.append(f"Contigs written: {contigs_path.name}")
@@ -192,16 +183,5 @@ def run_assembly(
         report_lines.append(f"{stat}: {value}")
     
     write_report(report_path, report_lines)
-    
-    print("\n" + "="*70)
-    print("ASSEMBLY COMPLETE")
-    print("="*70)
-    print(f"Contigs: {len(contigs)}")
-    if contigs:
-        print(f"Longest: {contig_statistics['longest']} bp")
-        print(f"Total length: {contig_statistics['total_length']} bp")
-        print(f"N50: {contig_statistics['n50']} bp")
-    print(f"\nResults in: {outdir}/")
-    print("="*70)
 
     return contig_statistics
