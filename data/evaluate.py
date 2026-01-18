@@ -6,7 +6,6 @@ import sys
 from math import log
 
 minlen = 300
-
 samfile = pysam.AlignmentFile(sys.stdin)
 reftotlen = sum(samfile.lengths)
 rdstotlen = 0
@@ -22,6 +21,8 @@ for read in samfile.fetch(until_eof=True):
         if read.reference_length>=minlen:
              reads.append(read)
              fragments.append((read.reference_start, read.reference_end))
+
+print(f"Przeanalizowano {len(reads)} kontigów spełniających warunek 300bp")            
 samfile.close()
 
 contig_overlaps = []

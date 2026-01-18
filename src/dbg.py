@@ -25,6 +25,7 @@ from collections import defaultdict, deque
 ###############################
 ######### Graph Class #########
 ###############################
+
 class DeBruijnGraph:
     """
     Class stores a directed weigthed graph where:
@@ -39,7 +40,9 @@ class DeBruijnGraph:
         # edge: ACGT ---(weight w)---> CGTA
     """
 
-    def __init__(self):
+    def __init__(self, k: int = None):
+        self.node_len = k - 1 if k else None
+
         self.out_edges: dict[str, dict[str, int]] = defaultdict(
             dict
         )  # for each node 'u' store all outgoing edges
@@ -64,7 +67,12 @@ class DeBruijnGraph:
         #     "TTTA": 1,
         #     "CGTA": 0}
 
+        self.nodes: set[str] = set()
+
     def add_edge(self, u: str, v: str, weight: int):
+        self.nodes.add(u)  
+        self.nodes.add(v) 
+
         if v in self.out_edges[u]:  # checks if an edge u-> v alreade exists
             # if exists, increase the edge weight
             self.out_edges[u][v] += weight
@@ -102,7 +110,7 @@ def build_graph_from_kmers(
     if not kmer_counts:
         raise ValueError("kmer_counts dictionary is empty")
 
-    graph = DeBruijnGraph()
+    graph = DeBruijnGraph(k=k)
 
     for kmer, count in kmer_counts.items():
         if count < min_kmer_count:
@@ -128,8 +136,7 @@ def graph_stats(graph: DeBruijnGraph) -> dict[str, int]:
             - edges: number of directed edges
     """
 
-    nodes = set(graph.in_degree) | set(graph.out_degree)
-    n_nodes = len(nodes)
+    n_nodes = len(graph.nodes)
     n_edges = sum(len(v) for v in graph.out_edges.values())
 
     return {"nodes": n_nodes, "edges": n_edges}

@@ -19,16 +19,20 @@ Pipeline:
 from __future__ import annotations
 
 from pathlib import Path
-import tqdm
 import argparse
 import json
 from datetime import datetime
+from velvet_optimizations import velvet_style_optimization, suggest_optimal_k
+from read_correction import adaptive_correction
 
-from io_fasta import fasta_to_list
+
+from io_fasta import fasta_to_list, write_fasta
 from kmers import count_kmers, kmer_histogram, write_kmer_histogram
 from dbg import build_graph_from_kmers, graph_stats, write_graph_stats
 from cleaning import remove_islands, remove_tips
 from cleaning import pop_bubbles_simple
+
+from traversal import extract_contigs, contig_stats
 
 
 ###############################
@@ -198,6 +202,8 @@ def main() -> None:
         report_lines.append(f"Read length (example): {len(reads[0])}")
     report_lines.append("")
 
+    reads = adaptive_correction(reads, verbose=True)
+
     # ---------- STEP 2: K-MERS ----------
     kmer_counts = count_kmers(reads, args.kmer_length)
     histogram = kmer_histogram(kmer_counts)
@@ -212,7 +218,7 @@ def main() -> None:
         k=args.kmer_length,
         min_kmer_count=args.min_kmer_count,
     )
-
+    
     stats_before = graph_stats(graph)
     write_graph_stats(stats_before, stats_before_path)
     report_lines.append("Graph stats before cleaning:")
@@ -221,11 +227,30 @@ def main() -> None:
     report_lines.append(f"Stats saved: {stats_before_path.name}")
     report_lines.append("")
 
+    print("\n[3b] Velvet-style optimization...")
+    graph = velvet_style_optimization(
+        graph, 
+        auto_cutoff=True,  # Auto coverage cutoff
+        use_tourbus=True,  # Resolve repeats
+        verbose=True
+    )
+    print("przed czyszczeniem")
+    print(f"Nodes with out_degree > 0: {sum(1 for n in graph.nodes if graph.out_degree.get(n,0) > 0)}")
+    print(f"Nodes with in_degree > 0: {sum(1 for n in graph.nodes if graph.in_degree.get(n,0) > 0)}")
+
     # ---------- STEP 4: CLEAN GRAPH ----------
     graph = remove_islands(graph, args.min_component_size)
+    print(f"After islands: {len(graph.nodes)} nodes")
+
     graph = remove_tips(graph, args.tip_max_len)
-    if args.pop_bubbles:
-        graph = pop_bubbles_simple(graph, args.max_bubble_len)
+    print(f"After tips: {len(graph.nodes)} nodes")
+    # if args.pop_bubbles:
+    graph = pop_bubbles_simple(graph, args.max_bubble_len)
+
+        # Po build_graph:
+    print("po czyszczeniem")
+    print(f"Nodes with out_degree > 0: {sum(1 for n in graph.nodes if graph.out_degree.get(n,0) > 0)}")
+    print(f"Nodes with in_degree > 0: {sum(1 for n in graph.nodes if graph.in_degree.get(n,0) > 0)}")
 
     stats_after = graph_stats(graph)
     write_graph_stats(stats_after, stats_after_path)
@@ -238,14 +263,17 @@ def main() -> None:
     # ---------- STEP 5: TRAVERSAL TO CONTIGS (TODO) ----------
     # Suggested interface for portfolio-quality structure:
     # from traversal import extract_contigs
-    # contigs = extract_contigs(graph, k=args.kmer_length, min_contig_len=args.min_contig_len)
-    # write_fasta(contigs, contigs_path, prefix="contig")
-    #
-    # report_lines.append(f"Contigs written: {contigs_path.name}")
-    # report_lines.append(f"Contigs >= {args.min_contig_len} bp: {len(contigs)}")
-    #
+    contigs = extract_contigs(graph, k=args.kmer_length, min_contig_len=args.min_contig_len)
+    write_fasta(contigs, contigs_path, prefix="contig")
+    
+    report_lines.append(f"Contigs written: {contigs_path.name}")
+    report_lines.append(f"Contigs >= {args.min_contig_len} bp: {len(contigs)}")
+    
     # For now, we only record that traversal is not yet implemented.
-    report_lines.append("Traversal step: TODO (extract contigs from cleaned graph)")
+    contig_statistics = contig_stats(contigs)   
+
+    for stat, value in contig_statistics.items():
+        report_lines.append(f"{stat}: {value}")
     report_lines.append(f"Planned contigs path: {contigs_path.name}")
     report_lines.append("")
 
