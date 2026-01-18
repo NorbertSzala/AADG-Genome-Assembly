@@ -22,18 +22,16 @@ from pathlib import Path
 import argparse
 import json
 from datetime import datetime
-from velvet_optimizations import velvet_style_optimization, suggest_optimal_k
-from read_correction import adaptive_correction
-
 
 from io_fasta import fasta_to_list, write_fasta
 from kmers import count_kmers, kmer_histogram, write_kmer_histogram
 from dbg import build_graph_from_kmers, graph_stats, write_graph_stats
-from cleaning import remove_islands, remove_tips
-from cleaning import pop_bubbles_simple
-
+from cleaning import remove_islands, remove_tips, pop_bubbles_simple
 from traversal import extract_contigs, contig_stats
 
+from velvet_optimizations import velvet_style_optimization
+from read_correction import adaptive_correction
+from optimize_parameters import optimize_parameters
 
 ###############################
 ########## ARGUMENTS ##########
@@ -103,6 +101,17 @@ def parse_arguments():
         default=300,
         help="Minimum contig length to report. Default: 300",
     )
+    
+    parser.add_argument(
+        "--optimize",
+        action="store_true",
+        help="Run full parameter optimization (tests ~120 combinations, ~2 hours)",
+    )
+    parser.add_argument(
+        "--optimize-quick",
+        action="store_true",
+        help="Run quick parameter optimization (tests ~15 combinations, ~15 minutes)",
+    )
 
     args = parser.parse_args()
 
@@ -130,7 +139,7 @@ def parse_arguments():
 
     if not args.input.is_file():
         raise ValueError(f"Input path is not a file: {args.input}")
-
+    
     args.outdir.mkdir(parents=True, exist_ok=True)
 
     return args
@@ -167,18 +176,39 @@ def write_report(path: Path, lines: list[str]) -> None:
 ###############################
 def main() -> None:
     args = parse_arguments()
-
+    
+    # ===============================================================
+    # OPTIMIZATION MODE - Run parameter search instead of assembly
+    # ===============================================================
+    if args.optimize or args.optimize_quick:
+        print("="*70)
+        print("RUNNING IN OPTIMIZATION MODE")
+        print("="*70)
+        print(f"Input: {args.input}")
+        print(f"Output: {args.outdir}")
+        print()
+        
+        if args.optimize_quick:
+            print("Mode: FULL optimization (~120 combinations, ~2 hours)")
+            optimize_parameters(args.input, final_output_dir=str(args.outdir))
+        
+        print("\n✓ Optimization complete!")
+        print(f"✓ Best assembly saved to: {args.outdir}/")
+        return  # Exit - don't run normal assembly
+    
+    # ===============================================================
+    # NORMAL ASSEMBLY MODE
+    # ===============================================================
+    
     outdir = args.outdir
 
-    # Output files (portfolio/debug friendly)
+    # Output files
     params_path = outdir / "params_used.json"
     report_path = outdir / "report.txt"
     hist_path = outdir / "kmer_histogram.tsv"
     stats_before_path = outdir / "graph_stats_before_cleaning.tsv"
     stats_after_path = outdir / "graph_stats_after_cleaning.tsv"
-    contigs_path = (
-        outdir / "contigs.fasta"
-    )  # will be used after traversal is implemented
+    contigs_path = outdir / "contigs.fasta"
 
     write_params_json(args, params_path)
 
@@ -196,13 +226,14 @@ def main() -> None:
     report_lines.append("")
 
     # ---------- STEP 1: READ FASTA ----------
+    print("[1/6] Reading reads...")
     reads = fasta_to_list(args.input)
     report_lines.append(f"Reads loaded: {len(reads)}")
     if reads:
         report_lines.append(f"Read length (example): {len(reads[0])}")
     report_lines.append("")
 
-    reads = adaptive_correction(reads, verbose=True)
+    reads = adaptive_correction(reads)
 
     # ---------- STEP 2: K-MERS ----------
     kmer_counts = count_kmers(reads, args.kmer_length)
@@ -218,7 +249,7 @@ def main() -> None:
         k=args.kmer_length,
         min_kmer_count=args.min_kmer_count,
     )
-    
+
     stats_before = graph_stats(graph)
     write_graph_stats(stats_before, stats_before_path)
     report_lines.append("Graph stats before cleaning:")
@@ -227,30 +258,31 @@ def main() -> None:
     report_lines.append(f"Stats saved: {stats_before_path.name}")
     report_lines.append("")
 
-    print("\n[3b] Velvet-style optimization...")
+
     graph = velvet_style_optimization(
         graph, 
-        auto_cutoff=True,  # Auto coverage cutoff
-        use_tourbus=True,  # Resolve repeats
-        verbose=True
+        auto_cutoff=True,
+        use_tourbus=True
     )
-    print("przed czyszczeniem")
-    print(f"Nodes with out_degree > 0: {sum(1 for n in graph.nodes if graph.out_degree.get(n,0) > 0)}")
-    print(f"Nodes with in_degree > 0: {sum(1 for n in graph.nodes if graph.in_degree.get(n,0) > 0)}")
+
+    # Debug info
+    print(f"Before cleaning: {len(graph.nodes)} nodes")
 
     # ---------- STEP 4: CLEAN GRAPH ----------
+    print("[4/6] Cleaning graph...")
+    
+    print("  Removing islands...")
     graph = remove_islands(graph, args.min_component_size)
-    print(f"After islands: {len(graph.nodes)} nodes")
+    print(f"    After islands: {len(graph.nodes)} nodes")
 
+    print("  Removing tips...")
     graph = remove_tips(graph, args.tip_max_len)
-    print(f"After tips: {len(graph.nodes)} nodes")
-    # if args.pop_bubbles:
-    graph = pop_bubbles_simple(graph, args.max_bubble_len)
-
-        # Po build_graph:
-    print("po czyszczeniem")
-    print(f"Nodes with out_degree > 0: {sum(1 for n in graph.nodes if graph.out_degree.get(n,0) > 0)}")
-    print(f"Nodes with in_degree > 0: {sum(1 for n in graph.nodes if graph.in_degree.get(n,0) > 0)}")
+    print(f"    After tips: {len(graph.nodes)} nodes")
+    
+    if args.pop_bubbles:
+        print("  Popping bubbles...")
+        graph = pop_bubbles_simple(graph, args.max_bubble_len)
+        print(f"    After bubbles: {len(graph.nodes)} nodes")
 
     stats_after = graph_stats(graph)
     write_graph_stats(stats_after, stats_after_path)
@@ -260,24 +292,41 @@ def main() -> None:
     report_lines.append(f"Stats saved: {stats_after_path.name}")
     report_lines.append("")
 
-    # ---------- STEP 5: TRAVERSAL TO CONTIGS (TODO) ----------
-    # Suggested interface for portfolio-quality structure:
-    # from traversal import extract_contigs
-    contigs = extract_contigs(graph, k=args.kmer_length, min_contig_len=args.min_contig_len)
+    # ---------- STEP 5: TRAVERSAL TO CONTIGS ----------
+    print("[5/6] Extracting contigs...")
+    contigs = extract_contigs(
+        graph, 
+        k=args.kmer_length, 
+        min_contig_len=args.min_contig_len
+    )
+    
+    print(f"  Generated {len(contigs)} contigs >= {args.min_contig_len} bp")
+    
+    # ---------- STEP 6: WRITE OUTPUT ----------
+    print("[6/6] Writing output...")
     write_fasta(contigs, contigs_path, prefix="contig")
     
     report_lines.append(f"Contigs written: {contigs_path.name}")
     report_lines.append(f"Contigs >= {args.min_contig_len} bp: {len(contigs)}")
+    report_lines.append("")
     
-    # For now, we only record that traversal is not yet implemented.
+    # Contig statistics
     contig_statistics = contig_stats(contigs)   
-
     for stat, value in contig_statistics.items():
         report_lines.append(f"{stat}: {value}")
-    report_lines.append(f"Planned contigs path: {contigs_path.name}")
-    report_lines.append("")
-
+    
     write_report(report_path, report_lines)
+    
+    print("\n" + "="*70)
+    print("ASSEMBLY COMPLETE")
+    print("="*70)
+    print(f"Contigs: {len(contigs)}")
+    if contigs:
+        print(f"Longest: {contig_statistics['longest']} bp")
+        print(f"Total length: {contig_statistics['total_length']} bp")
+        print(f"N50: {contig_statistics['n50']} bp")
+    print(f"\nResults in: {outdir}/")
+    print("="*70)
 
 
 if __name__ == "__main__":
