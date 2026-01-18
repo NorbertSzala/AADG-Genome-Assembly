@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
 """
-Korekta błędów w readach na podstawie spektrum k-merów.
-
-Strategia:
-- K-mery o wysokiej liczności = prawidłowe
-- K-mery o niskiej liczności = błędy
-- Korekta przez substytucję baz
+read_correction.py - ulepszona wersja
 """
-
 from collections import Counter
-from typing import List, Set
+from typing import List, Set, Dict
 
 
-def count_all_kmers(reads: List[str], k: int) -> dict[str, int]:
-    """Policz wszystkie k-mery we wszystkich readach."""
+def count_all_kmers(reads: List[str], k: int) -> Dict[str, int]:
+    """Policz wszystkie k-mery."""
     kmer_counts = Counter()
     for read in reads:
         for i in range(len(read) - k + 1):
@@ -21,96 +15,92 @@ def count_all_kmers(reads: List[str], k: int) -> dict[str, int]:
     return dict(kmer_counts)
 
 
-def find_trusted_kmers(kmer_counts: dict[str, int], min_count: int = 3) -> Set[str]:
-    """Znajdź zaufane k-mery (wysoką liczność = prawdopodobnie poprawne)."""
+def find_trusted_kmers(kmer_counts: Dict[str, int], min_count: int) -> Set[str]:
+    """K-mery o wysokiej liczności = prawdopodobnie poprawne."""
     return {kmer for kmer, count in kmer_counts.items() if count >= min_count}
 
 
-def correct_kmer(kmer: str, trusted_kmers: Set[str]) -> str:
-    """
-    Spróbuj skorygować k-mer przez testowanie wszystkich substytucji 1-bazowych.
-    Zwraca poprawiony k-mer jeśli znaleziony, inaczej oryginalny.
-    """
-    if kmer in trusted_kmers:
-        return kmer
-    
-    bases = ['A', 'C', 'G', 'T']
-    for i in range(len(kmer)):
-        original = kmer[i]
-        for new_base in bases:
-            if new_base == original:
-                continue
-            candidate = kmer[:i] + new_base + kmer[i+1:]
-            if candidate in trusted_kmers:
-                return candidate
-    
-    return kmer
-
-
-def correct_read(read: str, k: int, trusted_kmers: Set[str]) -> str:
-    """Koryguj błędy w pojedynczym readzie używając spektrum k-merów."""
-    read_list = list(read)
-    
-    for i in range(len(read) - k + 1):
-        kmer = read[i:i+k]
-        if kmer not in trusted_kmers:
-            corrected = correct_kmer(kmer, trusted_kmers)
-            if corrected != kmer:
-                for j in range(k):
-                    if kmer[j] != corrected[j]:
-                        read_list[i+j] = corrected[j]
-                        break
-    
-    return ''.join(read_list)
-
-
 def estimate_error_rate(reads: List[str], k: int = 17) -> float:
-    """
-    Oszacuj procent błędów na podstawie spektrum k-merów.
-    K-mery o liczności=1 to prawdopodobnie błędy.
-    """
+    """Oszacuj błędy na podstawie singletonów."""
     kmer_counts = count_all_kmers(reads, k)
-    singletons = sum(1 for count in kmer_counts.values() if count == 1)
-    total_kmers = sum(kmer_counts.values())
-    
-    if total_kmers == 0:
+    if not kmer_counts:
         return 0.0
     
-    error_rate = (singletons / total_kmers) / k
-    return error_rate
+    singletons = sum(1 for c in kmer_counts.values() if c == 1)
+    total = sum(kmer_counts.values())
+    
+    return (singletons / total) / k if total > 0 else 0.0
+
+
+def correct_read_voting(read: str, k: int, trusted_kmers: Set[str]) -> str:
+    """
+    Korekta przez głosowanie - każda pozycja zbiera "głosy" na bazę.
+    Lepsza niż sekwencyjna korekta dla wielu błędów.
+    """
+    if len(read) < k:
+        return read
+    
+    n = len(read)
+    # Dla każdej pozycji: {baza: liczba_głosów}
+    votes = [Counter() for _ in range(n)]
+    
+    # Zbierz głosy z trusted k-merów
+    for i in range(n - k + 1):
+        kmer = read[i:i+k]
+        
+        if kmer in trusted_kmers:
+            # Ten k-mer jest OK - głosuj za oryginalnymi bazami
+            for j in range(k):
+                votes[i + j][kmer[j]] += 1
+        else:
+            # Spróbuj naprawić przez substytucję
+            for pos in range(k):
+                for base in 'ACGT':
+                    candidate = kmer[:pos] + base + kmer[pos+1:]
+                    if candidate in trusted_kmers:
+                        # Znaleziono korektę - głosuj
+                        for j in range(k):
+                            votes[i + j][candidate[j]] += 1
+    
+    # Wybierz bazę z największą liczbą głosów
+    corrected = []
+    for i, original_base in enumerate(read):
+        if votes[i]:
+            best_base = votes[i].most_common(1)[0][0]
+            corrected.append(best_base)
+        else:
+            corrected.append(original_base)
+    
+    return ''.join(corrected)
 
 
 def adaptive_correction(reads: List[str]) -> List[str]:
     """
-    Automatyczna korekta błędów - wybiera parametry na podstawie danych.
-    
-    Proces:
-    1. Oszacuj procent błędów
-    2. Wybierz k, min_count na podstawie błędów
-    3. Uruchom korekta (1-2 rundy)
-    
-    Args:
-        reads: Lista sekwencji readów
-    
-    Returns:
-        Lista skorygowanych readów
+    Automatyczna wielorundowa korekcja.
     """
+    if not reads:
+        return reads
+    
+    current = reads
+    
     # Oszacuj błędy
-    error_rate = estimate_error_rate(reads, k=17)
+    error_rate = estimate_error_rate(current, k=15)
     
-    # Wybierz parametry na podstawie błędów
-    if error_rate < 0.02:  # <2% błędów
-        k, min_count, rounds = 21, 2, 1
-    elif error_rate < 0.04:  # 2-4% błędów
-        k, min_count, rounds = 17, 3, 2
-    else:  # >4% błędów
-        k, min_count, rounds = 15, 4, 2
+    # Parametry zależne od poziomu błędów
+    if error_rate < 0.015:      # <1.5%
+        params = [(21, 2)]       # 1 runda
+    elif error_rate < 0.03:     # 1.5-3%
+        params = [(17, 3), (21, 2)]  # 2 rundy
+    else:                        # >3%
+        params = [(15, 4), (17, 3), (21, 2)]  # 3 rundy
     
-    # Korekta wielorundowa
-    current_reads = reads
-    for _ in range(rounds):
-        kmer_counts = count_all_kmers(current_reads, k)
-        trusted_kmers = find_trusted_kmers(kmer_counts, min_count)
-        current_reads = [correct_read(read, k, trusted_kmers) for read in current_reads]
+    for k, min_count in params:
+        kmer_counts = count_all_kmers(current, k)
+        trusted = find_trusted_kmers(kmer_counts, min_count)
+        
+        if len(trusted) < 100:  # Za mało trusted k-merów
+            continue
+            
+        current = [correct_read_voting(r, k, trusted) for r in current]
     
-    return current_reads
+    return current

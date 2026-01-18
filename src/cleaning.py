@@ -1,329 +1,434 @@
 #!/usr/bin/env python3
-
 """
-Summary:
-Graph cleaning utilities for De Bruijn graph.
+cleaning.py - Graph cleaning utilities for De Bruijn graph.
 
-Implements removal of:
-- islands (small disconnected components)
-- tips (short dead-end paths)
-- simple bubbles (optional, conservative)
+Implements:
+- Helper functions for node/edge operations
+- Island removal (small disconnected components)
+- Tip removal (short dead-end paths)
+- Bubble popping (simple bubbles)
 """
 
-
-###############################
-########### IMPORTS  ##########
-###############################
 from collections import deque
+from typing import List, Set, Tuple
 from dbg import DeBruijnGraph
 
 
 ###############################
-########## FUNCTIONS ##########
+######## HELPER FUNCTIONS #####
 ###############################
 
+def get_predecessors(graph: DeBruijnGraph, node: str) -> List[str]:
+    """Znajdź wszystkie węzły wchodzące do node."""
+    return [u for u, targets in graph.out_edges.items() if node in targets]
 
-# Helper function
-def _neighbors_undirected(graph: DeBruijnGraph, node: str) -> set[str]:
+
+def get_successors(graph: DeBruijnGraph, node: str) -> List[str]:
+    """Znajdź wszystkie węzły wychodzące z node."""
+    if node in graph.out_edges:
+        return list(graph.out_edges[node].keys())
+    return []
+
+
+def get_neighbors_undirected(graph: DeBruijnGraph, node: str) -> Set[str]:
+    """Pobierz wszystkich sąsiadów (ignorując kierunek krawędzi)."""
     neighbors = set()
-
+    
+    # Wychodzące
     if node in graph.out_edges:
         neighbors.update(graph.out_edges[node].keys())
-
-    # incoming neighbors
-    for u, targets in graph.out_edges.items():
-        if node in targets:
-            neighbors.add(u)
+    
+    # Wchodzące
+    neighbors.update(get_predecessors(graph, node))
+    
     return neighbors
 
 
-def remove_islands(
-    graph: DeBruijnGraph, min_component_size_nodes: int
-) -> DeBruijnGraph:
+def get_edge_weight(graph: DeBruijnGraph, u: str, v: str) -> int:
+    """Pobierz wagę krawędzi u -> v."""
+    if u in graph.out_edges and v in graph.out_edges[u]:
+        return graph.out_edges[u][v]
+    return 0
+
+
+def remove_edge(graph: DeBruijnGraph, u: str, v: str) -> None:
+    """Usuń krawędź u -> v z grafu."""
+    if u in graph.out_edges and v in graph.out_edges[u]:
+        del graph.out_edges[u][v]
+        graph.out_degree[u] -= 1
+        graph.in_degree[v] -= 1
+        
+        # Wyczyść pusty słownik
+        if not graph.out_edges[u]:
+            del graph.out_edges[u]
+
+
+def remove_node(graph: DeBruijnGraph, node: str) -> None:
+    """Usuń węzeł i wszystkie jego krawędzie z grafu."""
+    # Usuń wychodzące krawędzie
+    if node in graph.out_edges:
+        for v in list(graph.out_edges[node].keys()):
+            graph.in_degree[v] -= 1
+        del graph.out_edges[node]
+    
+    # Usuń wchodzące krawędzie
+    for u in list(graph.out_edges.keys()):
+        if node in graph.out_edges[u]:
+            del graph.out_edges[u][node]
+            graph.out_degree[u] -= 1
+            
+            # Wyczyść pusty słownik
+            if not graph.out_edges[u]:
+                del graph.out_edges[u]
+    
+    # Usuń z bookkeepingu
+    graph.in_degree.pop(node, None)
+    graph.out_degree.pop(node, None)
+    graph.nodes.discard(node)
+
+
+def remove_nodes(graph: DeBruijnGraph, nodes: Set[str]) -> None:
+    """Usuń wiele węzłów naraz (bardziej efektywne)."""
+    for node in nodes:
+        remove_node(graph, node)
+
+
+def node_exists(graph: DeBruijnGraph, node: str) -> bool:
+    """Sprawdź czy węzeł istnieje w grafie."""
+    return node in graph.nodes
+
+
+###############################
+######## ISLAND REMOVAL #######
+###############################
+
+def find_connected_component(graph: DeBruijnGraph, start: str, visited: Set[str]) -> Set[str]:
+    """BFS aby znaleźć komponent połączony z start."""
+    component = set()
+    queue = deque([start])
+    
+    while queue:
+        current = queue.popleft()
+        if current in visited:
+            continue
+        
+        visited.add(current)
+        component.add(current)
+        
+        for neighbor in get_neighbors_undirected(graph, current):
+            if neighbor not in visited:
+                queue.append(neighbor)
+    
+    return component
+
+
+def remove_islands(graph: DeBruijnGraph, min_component_size: int) -> DeBruijnGraph:
     """
-    Remove small disconected components (islands) from graph to clean up.
-
-    Generally, real genome form some large conected graph but with many 'mistakes' (small disconected subraphs).
-    We find all conected components (ignoring edge direction)
-
-    Input:
-    - DeBruijne Graph
-    - min_component_size_nodes: minimal number of nodes a component must have to be kept
-
-    OUTPUT:
-    - the same graph object, modified in place
+    Usuń małe rozłączone komponenty (wyspy).
+    
+    Args:
+        graph: Graf de Bruijna
+        min_component_size: Minimalna liczba węzłów do zachowania komponentu
+    
+    Returns:
+        Zmodyfikowany graf
     """
-
-    visited = set()  # Keep track of nodes that were already visited during BFS/DFS
-    all_nodes = set(graph.in_degree) | set(
-        graph.out_degree
-    )  # All nodes in graoh (union of nodes with in/out degree)
-
-    for node in list(all_nodes):
+    visited: Set[str] = set()
+    nodes_to_remove: Set[str] = set()
+    
+    for node in list(graph.nodes):
         if node in visited:
             continue
-
-        # Start BFS from this node to find its connected component
-        queue = deque([node])
-        component = set([node])
-        visited.add(node)
-
-        # BFS loop
-        while queue:
-            current = queue.popleft()
-
-            # get all neighbors of the current node, ignoring direction (incoming and outgoing)
-            for neigh in _neighbors_undirected(graph, current):
-                if neigh not in visited:
-                    visited.add(neigh)
-                    component.add(neigh)
-                    queue.append(neigh)
-
-        # now, 'component' contain all nodes connected to 'node'
-        # Example:  component = {"ACGT", "CGTA", "GTAC"}
-
-        # If the component is too small, consider it as an island
-        if len(component) < min_component_size_nodes:
-            # remove every node in this small component
-            for n in component:
-                # Remove outgoing edges from n
-                if n in graph.out_edges:
-                    for v in list(graph.out_edges[n]):
-                        graph.in_degree[v] -= 1
-
-                    del graph.out_edges[n]
-
-                # remove incoming edges:
-                for u in list(graph.out_edges):
-                    if n in graph.out_edges[u]:
-                        del graph.out_edges[u][n]
-                        graph.out_degree[u] -= 1
-
-                # remove degree bookkeeping for node n
-                graph.in_degree.pop(n, None)
-                graph.out_degree.pop(n, None)
-                
-                # Usuń z graph.nodes
-                if hasattr(graph, 'nodes'):
-                    graph.nodes.discard(n)
+        
+        component = find_connected_component(graph, node, visited)
+        
+        if len(component) < min_component_size:
+            nodes_to_remove.update(component)
+    
+    remove_nodes(graph, nodes_to_remove)
     
     return graph
+
+
+###############################
+######### TIP REMOVAL #########
+###############################
+
+def trace_tip_backward(graph: DeBruijnGraph, start: str, max_len: int) -> List[str]:
+    """
+    Śledź tip wstecz od dead-end do rozgałęzienia.
+    Zwraca ścieżkę lub None jeśli nie jest tipem.
+    """
+    path = [start]
+    current = start
+    
+    while len(path) <= max_len:
+        preds = get_predecessors(graph, current)
+        
+        if len(preds) != 1:
+            break
+        
+        pred = preds[0]
+        path.append(pred)
+        
+        # Dotarliśmy do rozgałęzienia - to jest tip
+        if graph.out_degree.get(pred, 0) > 1:
+            return path
+        
+        current = pred
+    
+    # Ścieżka za długa lub nie kończy się rozgałęzieniem
+    return None
+
+
+def trace_tip_forward(graph: DeBruijnGraph, start: str, max_len: int) -> List[str]:
+    """
+    Śledź tip do przodu od źródła do punktu scalenia.
+    Zwraca ścieżkę lub None jeśli nie jest tipem.
+    """
+    path = [start]
+    current = start
+    
+    while len(path) <= max_len:
+        successors = get_successors(graph, current)
+        
+        if len(successors) != 1:
+            break
+        
+        nxt = successors[0]
+        path.append(nxt)
+        
+        # Dotarliśmy do punktu scalenia - to jest tip
+        if graph.in_degree.get(nxt, 0) > 1:
+            return path
+        
+        current = nxt
+    
+    return None
+
+
+def calculate_path_coverage(graph: DeBruijnGraph, path: List[str]) -> int:
+    """Oblicz sumę wag krawędzi na ścieżce."""
+    total = 0
+    for i in range(len(path) - 1):
+        total += get_edge_weight(graph, path[i], path[i + 1])
+    return total
+
+
+def should_remove_tip(
+    graph: DeBruijnGraph, 
+    path: List[str], 
+    min_coverage_ratio: float = 0.1
+) -> bool:
+    """
+    Zdecyduj czy usunąć tip na podstawie coverage.
+    Tip jest usuwany jeśli ma znacznie niższy coverage niż alternatywa.
+    """
+    if len(path) < 2:
+        return True  # Bardzo krótkie tipy zawsze usuwamy
+    
+    tip_coverage = calculate_path_coverage(graph, path)
+    
+    # Znajdź węzeł rozgałęzienia (ostatni w ścieżce backward lub forward)
+    branch_node = path[-1]
+    
+    # Znajdź coverage alternatywnej ścieżki
+    alt_coverage = 0
+    tip_neighbor = path[-2]
+    
+    for target in get_successors(graph, branch_node):
+        if target != tip_neighbor:
+            weight = get_edge_weight(graph, branch_node, target)
+            alt_coverage = max(alt_coverage, weight)
+    
+    for pred in get_predecessors(graph, branch_node):
+        if pred != tip_neighbor:
+            weight = get_edge_weight(graph, pred, branch_node)
+            alt_coverage = max(alt_coverage, weight)
+    
+    # Usuń jeśli coverage tipu jest znacznie niższy
+    if alt_coverage > 0:
+        return tip_coverage / alt_coverage < min_coverage_ratio
+    
+    return True  # Brak alternatywy - usuń tip
 
 
 def remove_tips(
     graph: DeBruijnGraph,
     tip_max_len: int,
+    min_coverage_ratio: float = 0.1,
+    max_iterations: int = 20
 ) -> DeBruijnGraph:
     """
-    Remove short dead-end paths (tips).
-
-    As a 'tip' we understand a path that ends without outgoing edges or starts at node with in_degree==0 or out_degree==0
-
-    Main idea is to find dead-end nodes, walk along the path as long as in_degree==1 and out_degree==1. Stop when we reach a branching node or the bath becomes too long.
-
-    If path is short enough, delete it.
-
-    Inpout:
-        - graph: DeBruijnGraph
-        - tip_max_len: maximum allowed length of a tip (in nodes)
-
-    OUTPUT:
-        - cleaned graph
-    """
-
-    # Iteruje wielokrotnie aż stabilizuje sie
-    changed = True
-    iterations = 0
-    max_iterations = 30  
+    Usuń krótkie dead-end ścieżki (tipy).
     
-    while changed and iterations < max_iterations:
-        changed = False
-        iterations += 1
-        nodes_to_remove = []
-        nodes = set(graph.in_degree) | set(graph.out_degree)  # all nodes in the graph
-
-        # check each node as a potential tip start
-        for node in list(nodes):
-            # Skip if already marked for removal
+    Args:
+        graph: Graf de Bruijna
+        tip_max_len: Maksymalna długość tipu (w węzłach)
+        min_coverage_ratio: Minimalny stosunek coverage tip/alternatywa
+        max_iterations: Maksymalna liczba iteracji
+    
+    Returns:
+        Zmodyfikowany graf
+    """
+    for iteration in range(max_iterations):
+        nodes_to_remove: Set[str] = set()
+        
+        for node in list(graph.nodes):
             if node in nodes_to_remove:
                 continue
             
-            # A dead-end node has no incoming OR no outgoing edges
+            if not node_exists(graph, node):
+                continue
+            
             in_deg = graph.in_degree.get(node, 0)
             out_deg = graph.out_degree.get(node, 0)
             
-            if out_deg == 0 or in_deg == 0:
-                path = [node]
-                current = node
-
-                # FIX 6: Walk from dead end toward potential branch
-                if out_deg == 0 and in_deg > 0:
-                    # Tip at end - walk backwards via incoming edges
-                    while len(path) < tip_max_len:
-                        # Find predecessors
-                        predecessors = [u for u in graph.out_edges if current in graph.out_edges[u]]
-                        
-                        if len(predecessors) != 1: break
-                        
-                        pred = predecessors[0]                        
-                        # If predecessor is branch, we found a valid tip
-                        if graph.out_degree.get(pred, 0) > 1:
-                            path.append(pred)
-                            break
-                        
-                        path.append(pred)
-                        current = pred
-                
-                elif in_deg == 0 and out_deg > 0:
-                    # Tip at start - walk forward
-                    while len(path) <= tip_max_len:
-                        next_nodes = list(graph.out_edges.get(current, {}).keys())
-                        
-                        if len(next_nodes) != 1:
-                            break
-                        
-                        next_node = next_nodes[0]
-                        
-                        # If next is merge point, stop
-                        if graph.in_degree.get(next_node, 0) > 1:
-                            path.append(next_node)
-                            break
-                        
-                        path.append(next_node)
-                        current = next_node
-
-                # If the path is short enough, mark for removal
-                if 1 <= len(path) <= tip_max_len:
-                    nodes_to_remove.extend(path)
-                    changed = True
-
-        # Remove collected nodes
-        for n in nodes_to_remove:
-            # Skip if already removed
-            if hasattr(graph, 'nodes') and n not in graph.nodes:
-                continue
+            path = None
             
-            # remove outgoing
-            if n in graph.out_edges:
-                for v in list(graph.out_edges[n].keys()):
-                    if v in graph.in_degree:
-                        graph.in_degree[v] -= 1
-                del graph.out_edges[n]
-
-            # remove incoming
-            for u in list(graph.out_edges.keys()):
-                if n in graph.out_edges[u]:
-                    del graph.out_edges[u][n]
-                    if u in graph.out_degree:
-                        graph.out_degree[u] -= 1
-
-            # Remove degree bookkeeping
-            graph.in_degree.pop(n, None)
-            graph.out_degree.pop(n, None)
+            # Tip na końcu (dead-end): out_degree == 0
+            if out_deg == 0 and in_deg > 0:
+                path = trace_tip_backward(graph, node, tip_max_len)
             
-            if hasattr(graph, 'nodes'):
-                graph.nodes.discard(n)
-
+            # Tip na początku (źródło): in_degree == 0
+            elif in_deg == 0 and out_deg > 0:
+                path = trace_tip_forward(graph, node, tip_max_len)
+            
+            if path and should_remove_tip(graph, path, min_coverage_ratio):
+                # Usuń wszystkie węzły oprócz węzła rozgałęzienia
+                nodes_to_remove.update(path[:-1])
+        
+        if not nodes_to_remove:
+            break  # Brak zmian - koniec
+        
+        remove_nodes(graph, nodes_to_remove)
+    
     return graph
+
+
+###############################
+######## BUBBLE POPPING #######
+###############################
+
+def walk_simple_path(
+    graph: DeBruijnGraph, 
+    start: str, 
+    max_len: int
+) -> Tuple[str, List[str], int]:
+    """
+    Idź prostą ścieżką (in=1, out=1) od start.
+    
+    Returns:
+        (end_node, path, total_weight)
+    """
+    path = [start]
+    weight_sum = 0
+    current = start
+    
+    for _ in range(max_len):
+        out_deg = graph.out_degree.get(current, 0)
+        in_deg = graph.in_degree.get(current, 0)
+        
+        # Zatrzymaj się jeśli nie jest to prosta ścieżka
+        if out_deg != 1 or in_deg != 1:
+            break
+        
+        successors = get_successors(graph, current)
+        if not successors:
+            break
+        
+        nxt = successors[0]
+        weight_sum += get_edge_weight(graph, current, nxt)
+        path.append(nxt)
+        current = nxt
+    
+    return current, path, weight_sum
 
 
 def pop_bubbles_simple(
     graph: DeBruijnGraph,
-    max_bubble_len: int,
+    max_bubble_len: int
 ) -> DeBruijnGraph:
     """
-    Remove very simple bubbles from the graph.
-
-    We consider a bubble as:
-        - one node splits into two alternative paths, where these paths merge into one node later
-        - They are often caused by sequencing errors or SNPs
-
-    We only take into account:
-        - exactly two outgoing edges (a simple split)
-        - short paths
-        - same merge node
-
-    INPUT:
-        - graph: DeBruijnGraph
-        - max_bubble_len: maximum path length to consider a bubble
-
-    OUTPUT:
-        - graph with weaker bubble path removed
+    Usuń proste bubble (rozgałęzienie -> dwie ścieżki -> scalenie).
+    
+    Strategia: Usuń słabszą ścieżkę (niższy coverage).
+    
+    Args:
+        graph: Graf de Bruijna
+        max_bubble_len: Maksymalna długość ścieżki bubble
+    
+    Returns:
+        Zmodyfikowany graf
     """
-
-    # Iterate over all nodes as potential split points
-    for u in list(graph.out_edges):
-
-        targets = list(graph.out_edges[u].keys())
-        if len(targets) != 2:  # A split node must have exactly two outgoing edges
-            continue  # not a split
-
+    for u in list(graph.out_edges.keys()):
+        if not node_exists(graph, u):
+            continue
+        
+        targets = get_successors(graph, u)
+        
+        # Szukamy rozgałęzienia na dokładnie 2 ścieżki
+        if len(targets) != 2:
+            continue
+        
         v1, v2 = targets
-
-        # Helper function to walk a path forward
-        def walk(start):
-            path = [start]
-            weight_sum = 0
-            current = start
-
-            for _ in range(max_bubble_len):  
-                out_deg = graph.out_degree.get(current, 0)  
-                in_deg = graph.in_degree.get(current, 0)    
-                
-                if out_deg != 1 or in_deg != 1:
-                    break
-
-                next_nodes = list(graph.out_edges.get(current, {}).keys())  
-                if not next_nodes:  
-                    break
-                
-                nxt = next_nodes[0]                
-                weight_sum += graph.out_edges[current][nxt]
-                path.append(nxt)
-                current = nxt
-
-            # Return:
-            # - end node
-            # - path nodes
-            # - total edge weight
-            return current, path, weight_sum
-
-        # Walk both branches
-        end1, path1, w1 = walk(v1)
-        end2, path2, w2 = walk(v2)
-
+        
+        # Idź obiema ścieżkami
+        end1, path1, weight1 = walk_simple_path(graph, v1, max_bubble_len)
+        end2, path2, weight2 = walk_simple_path(graph, v2, max_bubble_len)
+        
+        # Sprawdź czy łączą się w tym samym węźle
         if end1 != end2:
-            continue  # If they do not merge, this is not a bubble
+            continue
+        
+        # To jest bubble! Usuń słabszą ścieżkę
+        if weight1 < weight2:
+            weaker_path = path1
+        else:
+            weaker_path = path2
+        
+        # Usuń węzły słabszej ścieżki (oprócz końcowego)
+        for node in weaker_path[:-1]:
+            if node_exists(graph, node):
+                remove_node(graph, node)
+    
+    return graph
 
-        #  Decide which path is weaker (lower total weight)
-        weaker = path1 if w1 < w2 else path2
 
-        # Remove nodes belonging to the weaker path
-        for n in weaker[:-1]:
-            # Skip if already removed
-            if hasattr(graph, 'nodes') and n not in graph.nodes:
-                continue
-            
-            # Remove outgoing edges
-            if n in graph.out_edges:
-                for v in list(graph.out_edges[n]):
-                    if v in graph.in_degree:
-                        graph.in_degree[v] -= 1
-                del graph.out_edges[n]
+###############################
+######## COMBINED CLEANING ####
+###############################
 
-            # Remove incoming edges
-            for x in list(graph.out_edges):
-                if n in graph.out_edges[x]:
-                    del graph.out_edges[x][n]
-                    if x in graph.out_degree:
-                        graph.out_degree[x] -= 1
-
-            # Remove degree bookkeeping
-            graph.in_degree.pop(n, None)
-            graph.out_degree.pop(n, None)   
-
-            # FIX 8: Usuń z graph.nodes
-            if hasattr(graph, 'nodes'):
-                graph.nodes.discard(n)
-
+def clean_graph(
+    graph: DeBruijnGraph,
+    min_component_size: int = 10,
+    tip_max_len: int = 3,
+    pop_bubbles: bool = False,
+    max_bubble_len: int = 5,
+    min_coverage_ratio: float = 0.1
+) -> DeBruijnGraph:
+    """
+    Pełne czyszczenie grafu w jednej funkcji.
+    
+    Args:
+        graph: Graf de Bruijna
+        min_component_size: Min węzłów w komponencie
+        tip_max_len: Max długość tipu
+        pop_bubbles: Czy usuwać bubble
+        max_bubble_len: Max długość bubble
+        min_coverage_ratio: Min stosunek coverage dla tipów
+    
+    Returns:
+        Wyczyszczony graf
+    """
+    graph = remove_islands(graph, min_component_size)
+    graph = remove_tips(graph, tip_max_len, min_coverage_ratio)
+    
+    if pop_bubbles:
+        graph = pop_bubbles_simple(graph, max_bubble_len)
+    
+    # Drugie przejście tip removal po bubble popping
+    if pop_bubbles:
+        graph = remove_tips(graph, tip_max_len, min_coverage_ratio)
+    
     return graph

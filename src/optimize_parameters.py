@@ -37,22 +37,17 @@ from assembly_core import run_assembly
 #     return total_score + n50_score + contig_penalty
 
 def score_result(metrics):
-    """
-    Ocena bez znajomości długości genomu i referencji.
-    """
+    """Scoring: total_length (pokrycie) + N50 (ciągłość)"""
     if metrics is None or metrics.get('num_contigs', 0) == 0:
         return 0
     
-    # 1. N50 i Najdłuższy kontig
-    continuity_score = math.log10(metrics['n50'] * metrics['longest'] + 1)
+    # Total length (pokrycie genomu) - 60%
+    coverage_score = metrics['total_length'] * 0.6
     
-    # 2. Kara za fragmentację
-    fragmentation_penalty = 1.0 / math.log(metrics['num_contigs'] + 4, 5)
+    # N50 (ciągłość) - 40%
+    continuity_score = metrics['n50'] * 0.4
     
-    # 3. Bonus za średnią długość
-    mean_bonus = min(1.0, metrics['mean_length'] / 1000)
-    
-    return continuity_score * fragmentation_penalty * (1 + mean_bonus)
+    return coverage_score #+ continuity_score
 
 
 def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
@@ -79,25 +74,15 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     #     'max_bubble_len': [5, 8],
     #     'min_contig_len': [300]
     # }
-    # param_grid = {
-    #     'kmer_length': [15, 17, 21, 25, 29, 31, 35],  # Szerszy zakres, niższe k dla wyższego error rate
-    #     'min_kmer_count': [2, 3, 4, 5],  # Wyższe wartości filtrują błędne k-mery (error rate 5%)
-    #     'min_component_size': [3, 5, 8, 10, 15],  # Więcej opcji dla filtrowania małych wysp
-    #     'tip_max_len': [1, 2, 3, 5],  # Dłuższe tipy przy wyższym error rate
-    #     'pop_bubbles': [True, False],
-    #     'max_bubble_len': [3, 5, 8, 10],  # Dłuższe bubble paths przy error rate 5%
-    #     'min_contig_len': [300]  # Różne progi długości
-    # }
     param_grid = {
-        'kmer_length': [15],  # Szerszy zakres, niższe k dla wyższego error rate
+        'kmer_length': [17, 19, 21],  # Szerszy zakres, niższe k dla wyższego error rate
         'min_kmer_count': [2, 3],  # Wyższe wartości filtrują błędne k-mery (error rate 5%)
-        'min_component_size': [3, 5],  # Więcej opcji dla filtrowania małych wysp
-        'tip_max_len': [1, 2],  # Dłuższe tipy przy wyższym error rate
-        'pop_bubbles': [True, False],
-        'max_bubble_len': [3, 5, 8, 10],  # Dłuższe bubble paths przy error rate 5%
+        'min_component_size': [10, 15],  # Więcej opcji dla filtrowania małych wysp
+        'tip_max_len': [1],  # Dłuższe tipy przy wyższym error rate
+        'pop_bubbles': [True],
+        'max_bubble_len': [3],  # Dłuższe bubble paths przy error rate 5%
         'min_contig_len': [300]  # Różne progi długości
     }
-    
     # Generate combinations
     combinations = []
     for k in param_grid['kmer_length']:
@@ -128,7 +113,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     best_result = None
 
     for i, params in enumerate(combinations, 1):
-        print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}")
+        print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}, min_c_s={params['min_component_size']}")
         
         output_dir = temp_dir / f"run_{i:03d}"
         output_dir.mkdir(parents=True, exist_ok=True) 
@@ -143,7 +128,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
             
             if metrics and metrics.get('num_contigs', 0) > 0:
                 score = score_result(metrics)
-                print(f"    → total={metrics['total_length']}, N50={metrics['n50']}, score={score:.0f}")
+                print(f"    → total={metrics['total_length']}, N50={metrics['n50']}, score={score:.4f}")
                 results.append({
                     'params': params,
                     'metrics': metrics,

@@ -153,6 +153,7 @@ def run_assembly(
     
     if pop_bubbles:
         graph = pop_bubbles_simple(graph, max_bubble_len)
+        graph = remove_tips(graph, tip_max_len)
         # print(f"    After bubbles: {len(graph.nodes)} nodes")
 
     stats_after = graph_stats(graph)
