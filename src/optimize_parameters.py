@@ -15,9 +15,9 @@ import shutil
 from assembly_core import run_assembly
 
 PARAM_GRID = {
-        'kmer_length': [15, 17, 19, 21],  
-        'min_kmer_count': [2, 3, 4], 
-        'min_component_size': [5, 10],  
+        'kmer_length': [17, 19, 21],  
+        'min_kmer_count': [2, 3], 
+        'min_component_size': [5],  
         'tip_max_len': [1, 2],  
         'pop_bubbles': [True, False],  
         'max_bubble_len': [3, 5],  
@@ -35,7 +35,7 @@ def score_result(metrics):
     # N50 (ciągłość) - 40%
     continuity_score = metrics['n50'] * 0.4
     
-    return coverage_score #+ continuity_score
+    return coverage_score + continuity_score
 
 def generate_param_combinations(param_grid: dict):
     """Generuj kombinacje parametrów."""
@@ -65,7 +65,7 @@ def generate_param_combinations(param_grid: dict):
 
 def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     """
-    Test multiple parameter combinations and save ONLY best.
+    Test multiple parameter combinations and save only best.
 
     """
     input_fasta = Path(input_fasta)
@@ -79,7 +79,7 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
     best_result = None
 
     for i, params in enumerate(combinations, 1):
-        print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}, min_c_s={params['min_component_size']}")
+        print(f"[{i}/{len(combinations)}] k={params['kmer_length']}, M={params['min_kmer_count']}, min_c_s={params['min_component_size']}, tip_max_len={params['tip_max_len']}")
         
         output_dir = temp_dir / f"run_{i:03d}"
         output_dir.mkdir(parents=True, exist_ok=True) 
@@ -149,15 +149,11 @@ def optimize_parameters(input_fasta, final_output_dir="best_assembly"):
         shutil.rmtree(temp_dir)
     
     print("BEST PARAMETERS")
-    print("="*70)
     for key, value in best['params'].items():
         print(f"  {key}: {value}")
-    print()
     print("Metrics:")
     for key, value in best['metrics'].items():
         print(f"  {key}: {value}")
-    print()
-    print(f"Saved to: {final_dir}/")
     
     return best
 

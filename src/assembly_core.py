@@ -7,7 +7,6 @@ from dbg import build_graph_from_kmers, graph_stats, write_graph_stats
 from cleaning import remove_islands, remove_tips, pop_bubbles_simple
 from traversal import extract_contigs, contig_stats
 
-from velvet_optimizations import velvet_style_optimization
 from read_correction import adaptive_correction
 
 
@@ -132,13 +131,6 @@ def run_assembly(
     report_lines.append(f"  edges: {stats_before.get('edges', 'NA')}")
     report_lines.append(f"Stats saved: {stats_before_path.name}")
     report_lines.append("")
-
-
-    graph = velvet_style_optimization(
-        graph, 
-        auto_cutoff=True,
-        use_tourbus=True
-    )
 
     # # Debug info
     # print(f"Before cleaning: {len(graph.nodes)} nodes")

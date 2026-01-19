@@ -35,7 +35,6 @@ def estimate_error_rate(reads: List[str], k: int = 17) -> float:
 def correct_read_voting(read: str, k: int, trusted_kmers: Set[str]) -> str:
     """
     Korekta przez głosowanie - każda pozycja zbiera "głosy" na bazę.
-    Lepsza niż sekwencyjna korekta dla wielu błędów.
     """
     if len(read) < k:
         return read
@@ -79,7 +78,7 @@ def adaptive_correction(reads: List[str]) -> List[str]:
     Automatyczna wielorundowa korekcja.
     """
     if not reads:
-        return reads
+        return 
     
     current = reads
     
@@ -87,12 +86,12 @@ def adaptive_correction(reads: List[str]) -> List[str]:
     error_rate = estimate_error_rate(current, k=15)
     
     # Parametry zależne od poziomu błędów
-    if error_rate < 0.015:      # <1.5%
-        params = [(21, 2)]       # 1 runda
-    elif error_rate < 0.03:     # 1.5-3%
-        params = [(17, 3), (21, 2)]  # 2 rundy
-    else:                        # >3%
-        params = [(15, 4), (17, 3), (21, 2)]  # 3 rundy
+    if error_rate < 0.015:     
+        params = [(21, 2)]       
+    elif error_rate < 0.03:     
+        params = [(17, 3), (21, 2)]  
+    else:                       
+        params = [(15, 4), (17, 3), (21, 2)]  
     
     for k, min_count in params:
         kmer_counts = count_all_kmers(current, k)
