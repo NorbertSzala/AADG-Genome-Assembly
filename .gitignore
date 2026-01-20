@@ -4,3 +4,6 @@
 *fa
 *.bt2
 *.pdf
+*.pyc
+*.json
+out/report.txt

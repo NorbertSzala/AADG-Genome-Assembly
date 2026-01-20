@@ -1,128 +1,160 @@
-# Algorithms for Genomic Data Analysis  
-## Assignment 3: Genome Assembly  
-**Winter semester 2025/2026**
+# Genome Assembly Project – Script Overview
 
----
-
-## Task
-
-Design and implement an assembly algorithm that processes **single-end reads** originating from the **same strand of a single chromosome**.
-
-In your program you:
-- can use the codes from the classes,
-- cannot use programs and libraries for read assembly, mapping, alignment, etc.,
-- cannot use multiprocessing commands.
-
----
-
-## Required Deliverables
-
-The solution should include:
-- a program file `assembly`, executable using the syntax:  
-  `./assembly input_reads.fasta output_contigs.fasta`
-- a `README` file with a short description of your approach,
-- program source code (if the executable is binary).
-
----
-
-## Input and Minimum Performance Requirements
-
-Typical parameters of the input dataset:
-- number of reads: **1000**
-- read length: **80 bp**
-- average percentage of mismatches: **≤ 5%**
-- average coverage: **≥ 5×**
-
-The typical input dataset should be processed:
-- in **less than 1 hour** on a common laptop,
-- using **up to 0.5 GB of memory**.
-
----
-
-## Output and Evaluation
-
-Solutions will be evaluated on **simulated data** (artificial reads generated from a reference sequence).
-
-Output contigs will be **locally aligned** to the reference sequence. Resulting alignments will be processed as follows:
-- ambiguous alignment fragments (sharing a reference sequence interval) will be trimmed away,
-- alignments of length **< 300 bp** will be excluded.
-
----
-
-## Scoring
-
-Alignments passing the filtering criteria will be scored according to the formula:
-
-```
-
-S = (ref_cov · cont_cov · max(0.5, 10 · (ident − 0.9))) / log5(4 + n_alignments)
-
-```
-
-where:
-- `ref_cov` is the proportion of the reference sequence covered by the alignments,
-- `cont_cov` is the proportion of the contigs’ sequence covered by the alignments,
-- `ident` is the identity proportion in the alignments,
-- `n_alignments` is the number of alignments.
-
----
-
-## Training Data
-
-A training data package can be downloaded from Moodle. It consists of:
-- directory `reference/` containing:
-  - `reference.fasta`
-  - Bowtie2 index files for the reference sequence,
-- directory `reads/` containing simulated read files:
-  - `reads1.fasta` – 1000 reads with ~1% mismatches,
-  - `reads2.fasta` – 1000 reads with 1–3% mismatches,
-  - `reads3.fasta` – 1000 reads with 3–5% mismatches,
-- scripts to evaluate your assembly.
-
-The evaluation scripts require:
-- **Bowtie2**
-- **Python module `pysam`**
-
-Usage:
-
-```
-./evaluate.sh contigs.fasta
-```
+This project implements a simple **de novo genome assembler** based on a **De Bruijn graph**.  
+Input: single-end reads from **one strand** of one chromosome.  
+Output: assembled contigs in FASTA format.
 
 
 ---
 
-## Reference Results
+## run_assembly.py
+**Main entry point**
 
-Two reference algorithms were tested on the training datasets:
+**What it does**
+- Parses command-line arguments.
+- Runs the full assembly pipeline.
+- Optionally runs parameter optimization.
 
-| Dataset        | Algorithm 1 | Algorithm 2 |
-|---------------|-------------|-------------|
-| reads1.fasta  | 0.06        | 0.59        |
-| reads2.fasta  | 0.03        | 0.21        |
-| reads3.fasta  | 0.03        | 0.08        |
+**How it works**
+- Calls `run_assembly()` from `assembly_core.py`.
+- Passes user parameters (k-mer length, tip removal, bubble popping, etc.).
+- Validates input and creates output directories.
 
----
-
-## Terms and Conditions
-
-The assignment can be completed:
-- individually,
-- in 2-person teams,
-- or in 3-person teams.
-
+This is the main script you execute from the terminal.
 
 ---
 
-## Assessment
+## assembly_core.py
+**Core assembly pipeline.**
 
-Every solution that meets the minimum requirements receives **3 points**.
+**What it does**
+- Connects all steps into one workflow:
+  1. Read FASTA
+  2. Correct reads
+  3. Count k-mers
+  4. Build De Bruijn graph
+  5. Clean graph
+  6. Extract contigs
+  7. Write output and statistics
 
-Additional points can be awarded for:
-- **assembly quality**:
-  - 8 points for scoring higher than reference algorithm 2,
-  - 4 points for scoring higher than reference algorithm 1,
-- **meeting deadlines and presentation quality**: up to 2 points,
-- **team size**:
-  - 2 points for 1 person,
-  - 1 point for 2 persons.
+**How it works**
+- Saves reports (`report.txt`), parameters (`params_used.json`), and statistics.
+- Returns contig statistics such as total length and N50.
+
+Main logic of the assembler.
+
+---
+
+## io_fasta.py
+**FASTA input/output utilities.**
+
+**What it does**
+- Reads FASTA files into a list of sequences.
+- Writes sequences back to a FASTA file.
+
+**How it works**
+- Uses `Bio.SeqIO` only for parsing.
+- Normalizes sequences (uppercase, no whitespace).
+- Keeps file handling separate from algorithmic code.
+
+---
+
+## kmers.py
+**k-mer generation and statistics.**
+
+**What it does**
+- Generates k-mers from reads.
+- Counts how many times each k-mer appears.
+- Builds a histogram of k-mer frequencies.
+
+**How it works**
+- Slides a window of length `k` over each read.
+- Uses dictionaries for fast counting.
+- Writes the histogram to a TSV file.
+
+This step helps identify sequencing noise.
+
+---
+
+## dbg.py
+**De Bruijn graph implementation.**
+
+**What it does**
+- Defines the `DeBruijnGraph` class.
+- Builds a weighted directed graph from k-mers.
+
+**How it works**
+- Nodes are `(k-1)`-mers.
+- Edges represent k-mers.
+- Edge weight equals k-mer frequency.
+- Stores in-degree and out-degree for fast checks.
+
+---
+
+## cleaning.py
+**Graph cleaning algorithms.**
+
+**What it does**
+- Removes common graph errors:
+  - Small disconnected components (islands)
+  - Short dead ends (tips)
+  - Simple bubbles (optional)
+
+**How it works**
+- Use BFS to find connected components.
+- Traces short paths to detect tips.
+- Uses edge weights (coverage) to decide which paths to remove.
+- Bubble popping removes the weaker path.
+
+This improves contig quality.
+
+---
+
+## read_correction.py
+**Read error correction.**
+
+**What it does**
+- Corrects sequencing errors before graph construction.
+
+**How it works**
+- Estimates error rate using rare k-mers.
+- Finds “trusted” k-mers with high counts.
+- Corrects reads by base voting from trusted k-mers.
+- Runs multiple correction rounds depending on error level.
+
+This reduces noise early in the pipeline.
+
+---
+
+## traversal.py
+**Contig extraction from the graph.**
+
+**What it does**
+- Traverses the cleaned graph to build contigs.
+
+**How it works**
+- Finds start nodes (branches, sources, sinks).
+- Walks uniquely determined paths in both directions.
+- Converts node paths into DNA sequences.
+- Filters contigs shorter than a minimum length.
+- Computes contig statistics (N50, total length, etc.).
+
+This is where final sequences are assembled.
+
+---
+
+## optimize_parameters.py
+**Automatic parameter optimization.**
+
+**What it does**
+- Tests many parameter combinations.
+- Selects the best assembly result.
+
+**How it works**
+- Runs the assembler multiple times with different parameters.
+- Scores results using:
+  - total contig length (coverage)
+  - N50 (continuity)
+- Keeps only the best run and removes the rest.
+
+Useful for finding good parameters automatically.
