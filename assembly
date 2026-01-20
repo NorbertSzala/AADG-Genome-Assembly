@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import subprocess
 
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: ./assembly input_reads.fasta output_contigs.fasta")
@@ -15,12 +16,14 @@ def main():
     outdir = Path("assembly_tmp")
     outdir.mkdir(exist_ok=True)
 
-    # wywołujemy PRAWDZIWY main
     cmd = [
         sys.executable,
         str(Path(__file__).parent / "src" / "run_assembly.py"),
-        "-I", input_fasta,
-        "-O", str(outdir)
+        "-I",
+        input_fasta,
+        "-O",
+        str(outdir),
+        "--optimize",
     ]
 
     subprocess.run(cmd, check=True)
@@ -32,6 +35,7 @@ def main():
 
     output_fasta.parent.mkdir(parents=True, exist_ok=True)
     contigs.replace(output_fasta)
+
 
 if __name__ == "__main__":
     main()
