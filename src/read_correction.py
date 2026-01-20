@@ -86,12 +86,12 @@ def adaptive_correction(reads: List[str]) -> List[str]:
     error_rate = estimate_error_rate(current, k=15)
     
     # Parametry zależne od poziomu błędów
-    if error_rate < 0.015:     
-        params = [(21, 2)]       
-    elif error_rate < 0.03:     
-        params = [(17, 3), (21, 2)]  
-    else:                       
-        params = [(15, 4), (17, 3), (21, 2)]  
+    # if error_rate < 0.015:     
+    #     params = [(21, 2)]       
+    # elif error_rate < 0.03:     
+    #     params = [(17, 3), (21, 2)]  
+    # else:                       
+    params = [(15, 4), (17, 3), (21, 2)]  
     
     for k, min_count in params:
         kmer_counts = count_all_kmers(current, k)
